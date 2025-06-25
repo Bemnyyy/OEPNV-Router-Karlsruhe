@@ -50,12 +50,12 @@ class PublicTransportRouter:
         start_stops, start_walking = self._resolve_location(start_input)
         end_stops, end_walking = self._resolve_location(end_input)
 
+        #Filtere Verbindungen nach Verkehrsmittel-Modus
+        filtered_connections = self._filter_connections_by_mode(transport_mode)
+
         if not start_stops or not end_stops:
             print("Keine gültigen Haltestellen gefunden")
             return []
-        
-        #Filtere Verbindungen nach Verkehrsmittel-Modus
-        filtered_connections = self._filter_connections_by_mode(transport_mode)
         
         #DEBUGGING
         print(f"Gefilterte Verbindungen: {len(filtered_connections)} von {len(self.gtfs_processor.connections)}")
@@ -83,6 +83,8 @@ class PublicTransportRouter:
         #Versuche zuerst als Haltestelle       
         stops = self.gtfs_loader.get_stops_by_name(location_input)
         print(f"Gefundene Haltestellen für '{location_input}': {[s['stop_name'] for s in stops[:3]]}")
+        print("Alle gefundenen Stops für Eingabe:", [s['stop_id'] for s in stops])
+
         
         if stops:
             #Filtere nur Haltestellem die im Verbindungsindex existieren
@@ -93,10 +95,13 @@ class PublicTransportRouter:
                 
             print(f"Gefilterte gültige Haltestellen: {len(valid_stops)} von {len(stops)}")
             
+            if not valid_stops:
+                print("Warnung: Keine gültige Haltestelle gefunden. Verwende alle gefundenen Stops.")
+                valid_stops = stops
             #Nimmt nur die erste gültige Haltestelle
             if valid_stops:
                 return [valid_stops[0]], None
-        
+
         #Versuche als Adresse
         addresses = self.address_processor.find_address(location_input)
         if not addresses:
