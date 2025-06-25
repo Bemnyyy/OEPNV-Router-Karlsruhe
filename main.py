@@ -37,7 +37,7 @@ class KarlsruheTransitRouter:
         today = datetime.now()
         if not self.gtfs_processor.build_connection_graph(today):
             return False
-        
+
         # Router initialisieren
         self.router = PublicTransportRouter(
             self.gtfs_loader, self.gtfs_processor, self.address_processor
@@ -54,12 +54,12 @@ class KarlsruheTransitRouter:
         
         while True:
             try:
-                # Verkehrsmittel-Modus abfragen
+                #Verkehrsmittel-Modus abfragen
                 transport_mode = self._get_transport_mode()
                 if transport_mode is None:
                     continue
                 
-                # Start und Ziel abfragen
+                #Start und Ziel abfragen
                 start_location = self._get_location_input("Start (Adresse oder Haltestelle)")
                 if not start_location:
                     continue
@@ -67,36 +67,75 @@ class KarlsruheTransitRouter:
                 end_location = self._get_location_input("Ziel (Adresse oder Haltestelle)")
                 if not end_location:
                     continue
-                
+
                 start_stops, start_walking = self.router._resolve_location(start_location)
                 end_stops, end_walking = self.router._resolve_location(end_location)
 
+                #Erweiterte Stop-IDs berechnen
+                expanded_start_ids = []
+                for stop in start_stops:
+                    print("Hole child stops für:", stop['stop_id'])
+                    print("Gefundene child stop ids:", self.gtfs_loader.get_all_child_stop_ids(stop['stop_id']))
+                expanded_start_ids.extend(self.gtfs_loader.get_all_child_stop_ids(stop['stop_id']))
+                start_stop_ids = list(set(expanded_start_ids))
+
+                expanded_end_ids = []
+                for stop in end_stops:
+                    print("Hole child stops für:", stop['stop_id'])
+                    print("Gefundene child stop ids:", self.gtfs_loader.get_all_child_stop_ids(stop['stop_id']))
+                expanded_end_ids.extend(self.gtfs_loader.get_all_child_stop_ids(stop['stop_id']))
+                end_stop_ids = list(set(expanded_end_ids))
+
+                #Duplikate entfernen
+                start_stop_ids = list(set(start_stop_ids))
+                end_stop_ids = list(set(end_stop_ids))
+
                 #DEBUGGING
+                print("Erweiterte Start-Stop-IDs:", start_stop_ids)
+                print("Erweiterte Ziel-Stop-IDs:", end_stop_ids)
                 print("Gefundene Haltestelle:", [s['stop_name'] for s in start_stops])
                 print("Gefundene Ziel-Haltestelle:", [s['stop_name'] for s in end_stops])
-                
-                start_ids = [s['stop_id'] for s in start_stops]
-                end_ids = [s['stop_id'] for s in end_stops]
-                
-                #DEBUGGING
-                print("Verbindungen ab Start-Haltestelle:", any(c['from_stop_id'] in start_ids for c in self.router.gtfs_processor.connections))
-                print("Verbindungen zur Ziel-Haltestelle:", any(c['to_stop_id'] in end_ids for c in self.router.gtfs_processor.connections))
+                print("Verwende Start-Stop-IDs:", start_stop_ids)
+                print("Verwende Ziel-Stop-IDs:", end_stop_ids)
 
-                # Startzeit abfragen
+                #Startzeit abfragen
                 departure_time = self._get_departure_time()
                 if departure_time is None:
                     continue
                 
-                #DEBUGGING
                 print(f"\nVerwendete Startzeit: {self._format_time(departure_time)}")
                 
-                # Routing durchführen
-                journeys = self.router.find_routes(start_location, end_location, departure_time, transport_mode)
+                #Routing für alle Kombinationen durchführen
+                all_journeys = []
+                filtered_connections = self.router._filter_connections_by_mode(transport_mode)
                 
-                # Ergebnisse anzeigen
-                self._display_results(journeys)
+                for start_id in start_stop_ids:
+                    for end_id in end_stop_ids:
+                        #Erstelle Haltestellen-Dicts für das Routing
+                        start_stop_dict = {
+                            'stop_id': start_id,
+                            'stop_name': self.gtfs_loader.get_stop_name(start_id)  #diese Methode muss hinzugefügt werden
+                        }
+                        end_stop_dict = {
+                            'stop_id': end_id,
+                            'stop_name': self.gtfs_loader.get_stop_name(end_id)
+                        }
+                        
+                        #Routing für diese Kombination
+                        journeys = self.router._dijkstra_routing(
+                            start_stop_dict, 
+                            end_stop_dict, 
+                            departure_time, 
+                            filtered_connections,
+                            start_walking, 
+                            end_walking
+                        )
+                        all_journeys.extend(journeys)
                 
-                # Weitere Suche?
+                #Ergebnisse anzeigen
+                self._display_results(all_journeys)
+                
+                #Weitere Suche?
                 if not self._ask_continue():
                     break
                     
@@ -107,6 +146,7 @@ class KarlsruheTransitRouter:
                 print(f"Fehler: {e}")
                 if not self._ask_continue():
                     break
+
     
     def _get_transport_mode(self) -> Optional[int]:
         """Fragt Verkehrsmittel-Modus ab"""
@@ -195,7 +235,7 @@ class KarlsruheTransitRouter:
         print(f"Umstiege: {journey.transfers}")
         
         if journey.total_walking_distance > 0:
-            print(f"🚶 Fußweg gesamt: {journey.total_walking_distance:.0f}m")
+            print(f"Fußweg gesamt: {journey.total_walking_distance:.0f}m")
         
         print("\nVerbindungen:")
         
@@ -211,12 +251,12 @@ class KarlsruheTransitRouter:
         
         if segment.walking_directions:
             for direction in segment.walking_directions:
-                print(f"   → {direction}")
+                print(f"→ {direction}")
         
         if segment.to_stop_name:
-            print(f"   → zur Haltestelle: {segment.to_stop_name}")
+            print(f"→ zur Haltestelle: {segment.to_stop_name}")
         elif segment.from_stop_name:
-            print(f"   → von Haltestelle: {segment.from_stop_name}")
+            print(f"→ von Haltestelle: {segment.from_stop_name}")
     
     def _display_transit_segment(self, segment: RouteSegment):
         """Zeigt ÖPNV-Segment an"""
