@@ -27,12 +27,12 @@ class GTFSProcessor:
 
             print(f"Aktive Trips: {len(active_trips)}")
 
-            # Gruppiere Stop Times einmalig nach trip_id (Performance-Tipp)
+            # Gruppiert Stop Times einmalig nach trip_id
             stop_times_grouped = self.gtfs.stop_times.groupby('trip_id')
 
             self.connections = []
 
-            # tqdm-Fortschrittsbalken für schnellen, modernen Fortschrittsbalken
+            # tqdm-Fortschrittsbalken für Fortschrittsbalken
             for _, trip in tqdm(active_trips.iterrows(), total=len(active_trips), desc='Verarbeite Trips'):
                 try:
                     trip_stops = stop_times_grouped.get_group(trip['trip_id']).sort_values('stop_sequence')
