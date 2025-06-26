@@ -92,6 +92,7 @@ Der Router verwendet einen modifizieten Dijkstra - Algorithmus, der speziell fü
   python extract_addresses.py
   
   ! Beachten Sie hierbei, dass dies je nach Datengröße der .osm.pbf Datei zu erheblichen Ressourcenverbrauch ihres PCs kommen kann, da dies ein sehr Speicher aufwändiger Prozess       ist!
+
   Benutzen Sie deshalb, solang Sie diesen Code für Karlsruhe verwenden wollen die im Repository gegebene karlsruhe_addresses.csv.
 
   ## Bekannte Limitationen
