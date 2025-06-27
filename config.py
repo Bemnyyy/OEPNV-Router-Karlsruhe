@@ -10,9 +10,9 @@ class Config:
     ADDRESSES_CSV_PATH: str = "karlsruhe_addresses.csv" #Pfad zu der Adress-CSV
 
     #Routing-Einstellungen
-    MAX_WALKING_DISTANCE_M: int = 2000 #Maximale Fußwegdistanz in Metern
+    MAX_WALKING_DISTANCE_M: int = 500 #Maximale Fußwegdistanz in Metern
     WALKING_SPEED_MS: float = 1.5 #Gehgeschwindigkeit in m/s
-    TRANSFER_TIME_SECONDS: int = 30 #Mindest-Umstiegzeit in Sekunden
+    TRANSFER_TIME_SECONDS: int = 60 #Mindest-Umstiegzeit in Sekunden
 
     #Verkehrsmittel-Prioritäten
     TRANSPORT_PRIORITIES: Dict[str, int] = field(default_factory=lambda: 

@@ -47,13 +47,18 @@ class KarlsruheTransitRouter:
         return True
     
     def run(self):
-        """Hauptschleife des Programms"""
+        """Hauptschleife des Programms
+        Diese def koordiniert alles und stellt die Benutzeroberfläche bereit"""
+
+        #Kosmetische Darstellung des Startes:
         print("\n" + "="*50)
         print("Willkommen beim Karlsruhe ÖPNV-Router!")
         print("="*50)
         
+        #Hauptschleife:
         while True:
             try:
+                ''' 1. Benutzereingaben'''
                 #Verkehrsmittel-Modus abfragen
                 transport_mode = self._get_transport_mode()
                 if transport_mode is None:
@@ -67,75 +72,50 @@ class KarlsruheTransitRouter:
                 end_location = self._get_location_input("Ziel (Adresse oder Haltestelle)")
                 if not end_location:
                     continue
-
+                
+                '''2. Haltestellen auflösen, wandelt z.B. "Marktplatz" in die konkrete Haltestellen ID um'''
                 start_stops, start_walking = self.router._resolve_location(start_location)
                 end_stops, end_walking = self.router._resolve_location(end_location)
 
-                #Erweiterte Stop-IDs berechnen
+                #Schutzabfrage, wenn keine Haltestelle gefunden wurde
+                if not start_stops:
+                    print(f"Keine Haltestellen für '{start_location}' gefunden!")
+                    continue
+
+                if not end_stops:
+                    print(f"Keine Haltestellen für '{end_location}' gefunden")
+                    continue
+
+                ''' 3. Erweiterte Stop-IDs berechnen'''
+                # wird um die "child_stops" erweitert.
+                # Soll das Problem lösen, wenn User Haltestelle angibt aber diese Haltestelle mehrere Gleise hat
                 expanded_start_ids = []
                 for stop in start_stops:
-                    print("Hole child stops für:", stop['stop_id'])
-                    print("Gefundene child stop ids:", self.gtfs_loader.get_all_child_stop_ids(stop['stop_id']))
-                expanded_start_ids.extend(self.gtfs_loader.get_all_child_stop_ids(stop['stop_id']))
-                start_stop_ids = list(set(expanded_start_ids))
-
-                expanded_end_ids = []
-                for stop in end_stops:
-                    print("Hole child stops für:", stop['stop_id'])
-                    print("Gefundene child stop ids:", self.gtfs_loader.get_all_child_stop_ids(stop['stop_id']))
-                expanded_end_ids.extend(self.gtfs_loader.get_all_child_stop_ids(stop['stop_id']))
-                end_stop_ids = list(set(expanded_end_ids))
-
-                #Duplikate entfernen
-                start_stop_ids = list(set(start_stop_ids))
-                end_stop_ids = list(set(end_stop_ids))
-
-                #DEBUGGING
-                print("Erweiterte Start-Stop-IDs:", start_stop_ids)
-                print("Erweiterte Ziel-Stop-IDs:", end_stop_ids)
-                print("Gefundene Haltestelle:", [s['stop_name'] for s in start_stops])
-                print("Gefundene Ziel-Haltestelle:", [s['stop_name'] for s in end_stops])
-                print("Verwende Start-Stop-IDs:", start_stop_ids)
-                print("Verwende Ziel-Stop-IDs:", end_stop_ids)
-
+                    child_ids = self.gtfs_loader.get_all_child_stop_ids(stop['stop_id'])
+                    expanded_start_ids.extend(child_ids)
+                
                 #Startzeit abfragen
                 departure_time = self._get_departure_time()
                 if departure_time is None:
                     continue
                 
+                #DEBUGGING: Ob die Startzeit richtig formatiert und weitergegeben wurde
                 print(f"\nVerwendete Startzeit: {self._format_time(departure_time)}")
                 
-                #Routing für alle Kombinationen durchführen
-                all_journeys = []
-                filtered_connections = self.router._filter_connections_by_mode(transport_mode)
-                
-                for start_id in start_stop_ids:
-                    for end_id in end_stop_ids:
-                        #Erstelle Haltestellen-Dicts für das Routing
-                        start_stop_dict = {
-                            'stop_id': start_id,
-                            'stop_name': self.gtfs_loader.get_stop_name(start_id)  #diese Methode muss hinzugefügt werden
-                        }
-                        end_stop_dict = {
-                            'stop_id': end_id,
-                            'stop_name': self.gtfs_loader.get_stop_name(end_id)
-                        }
-                        
+                '''4. Routing durchführen'''
                         #Routing für diese Kombination
-                        journeys = self.router._dijkstra_routing(
-                            start_stop_dict, 
-                            end_stop_dict, 
-                            departure_time, 
-                            filtered_connections,
-                            start_walking, 
-                            end_walking
+                journeys = self.router.find_routes(
+                        start_location, 
+                        end_location, 
+                        departure_time, 
+                        transport_mode,
+                        max_routes=1
                         )
-                        all_journeys.extend(journeys)
                 
-                #Ergebnisse anzeigen
-                self._display_results(all_journeys)
+                ''' 5. Ergebnisse anzeigen'''
+                self._display_results(journeys)
                 
-                #Weitere Suche?
+                #Frage ob noch nach weiteren Routen gesucht werden soll
                 if not self._ask_continue():
                     break
                     

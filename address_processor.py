@@ -1,5 +1,7 @@
 import pandas as pd
 import math
+import unicodedata
+import re
 from typing import List, Dict, Optional, Tuple
 from config import config
 
@@ -12,6 +14,7 @@ class AddressProcessor:
         #Lädt die Adressendatenbank
         try:
             self.addresses_df = pd.read_csv(config.ADDRESSES_CSV_PATH)
+            print("Adressdatensatz wird geladen...")
             print(f"{len(self.addresses_df)} Adressen geladen")
             return True
         except Exception as e:
@@ -19,16 +22,34 @@ class AddressProcessor:
             return False
         
     def find_address(self, query: str) -> List[Dict]:
-        #Sucht Adressen basierend auf Eingaben
+        # Sucht Adressen basierend auf Eingaben, mit unicodedata auch geeignet für Umlaut und Sonderzeichen
         if self.addresses_df is None:
             return []
         
-        query_lower = query.lower()
-        matches = self.addresses_df[self.addresses_df['full_address'].str.lower().str.contains(query_lower, na=False)]
+        def normalize(s):
+            if not isinstance(s, str):
+                return ""
+            s = unicodedata.normalize('NFKD', s).encode('ASCII', 'ignore').decode('ASCII').lower().strip()
+            # Vereinheitliche "straße" und "str." und "str"
+            s = re.sub(r'\bstrasse\b', 'str', s)
+            s = re.sub(r'\bstr\.\b', 'str', s)
+            s = re.sub(r'\bstr\b', 'str', s)
+            s = s.replace(" ", "")
+            return s
+        
+        # Teilt Query und Adressen an Kommas auf und vergleicht nur den Straßenanteil
+        query_norm = normalize(query.split(',')[0]) # Nur der Teil vor dem ersten Komma
+
+        def address_street_part(addr):
+            return normalize(addr.split(',')[0]) # Nur der Teil vor dem ersten Komma
+        
+        matches = self.addresses_df[self.addresses_df['full_address'].apply(address_street_part).str.contains(query_norm, na=False)]
 
         return matches.to_dict('records')
-    
-    def get_nearest_stops(self, lat: float, lon: float, gtfs_loader, max_distance: int = None) -> List[Dict]:
+    # Info: Hier werden verschiedenste Arten wie eine Adresse geschrieben werden kann vereinheitlicht
+    # ... damit auch jede mögliche Eingabe gefunden wird
+
+    def get_nearest_stops(self, lat: float, lon: float, gtfs_loader, max_distance: int = None, max_result: int = 3) -> List[Dict]:
         #Findet nächstgelegene Haltestelle zu Koordinate
         if max_distance is None:
             max_distance = config.MAX_WALKING_DISTANCE_M
@@ -57,7 +78,10 @@ class AddressProcessor:
         #Sortiere nach Entfernung
         stops_with_distance.sort(key=lambda x: x['walking_distance'])
 
-        return stops_with_distance
+        if stops_with_distance is None:
+            print(f"Keine Haltestellen im Umkreis von {max_distance} gefunden")
+
+        return stops_with_distance[:max_result]
     
     def _haversine_distance(self, lat1:float, lon1:float, lat2:float, lon2:float) -> float:
         #Berechnet Luftlinienentfernung zwischen zwei Koordinaten

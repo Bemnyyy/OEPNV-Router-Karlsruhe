@@ -6,16 +6,19 @@ from config import config
 
 class GTFSLoader:
     def __init__(self):
-        self.stops = None
-        self.parent_to_children = None
-        self.routes = None
-        self.trips = None
-        self.stop_times = None
-        self.calendar = None
-        self.calendar_dates = None
+        #Speichert alle GTFS-Tabellen als Pandas DataFrame
+        self.stops = None #Alle Haltestellen mit Koordinaten und Namen
+        self.parent_to_children = None #Mapping
+        self.routes = None #Alle Lininen (Bus, Bahn, etc.) mit Typ und Namen
+        self.trips = None #Einzelne Fahrten einer Linie zu bestimmten Zeiten
+        self.stop_times = None #Ankunfts und Abfahrtszeiten für jede Haltestelle pro Trip
+        self.calendar = None #Wochentage, an denen Services aktiv sind
+        self.calendar_dates = None #Ausnahmen wie Feiertage, Sonderfahrpläne, etc
 
     def load_gtfs_data(self) -> bool:
-        #Lädt alle GTFS-Dateien
+        #Lädt alle GTFS-Dateien aus dem GTFS-Ordner in das Pandas DataFrame
+        # Jede GTFS-Datei wird zu einer Tabelle, mit der gearbeitet wird
+        #Nach dem Laden wird dann das parent/child Mapping erstellt
         try:
             print("Lade GTFS-Daten...")
 
@@ -52,8 +55,10 @@ class GTFSLoader:
             return False
 
     def build_parent_to_child_mapping(self):
-        #Diese Funktion erfüllt den Zweck ein Parent_station / child_station problem zu lösen, das besteht aufgrund der unterschiedlichen stop_id bennenungen in den gtfs daten
-        #Erstellt Mapping: parent_station_id -> Liste von child stop_ids
+        #PROBLEM: Große Bahnhöfe haben mehrere "child stops" (Gleise, Bahnsteige)
+        #z.B.: "Hauptbahnhof" hat mehrere Gleise
+        #Die Fahrpläne verwenden die spezifische Gleis-ID aber User suchen nach z.B. "Hauptbahnhof"
+        
         if self.stops is None:
             print("Warnung: stops ist None - Mapping wird nicht erstellt!")
             return
@@ -65,27 +70,41 @@ class GTFSLoader:
                 #Haltestellen ohne parent_station ist sozusagen ihr eigenener parent
                 parent = stop_id
             self.parent_to_children.setdefault(parent, []).append(stop_id)
-        print("parent_to_children Beispiel:", list(self.parent_to_children.items())[:5])
 
+    def get_all_child_stop_ids(self, stop_id: str) -> list[str]:
+        # liefert: {stop_id selbst} ∪ direkte Kinder ∪ Geschwister
+        if self.parent_to_children is None:
+            return [stop_id]
 
-    def get_all_child_stop_ids(self, stop_id):
-        # Gibt alle child stop_ids (inklusive sich selbst) für eine gegebene parent_station zurück
-        return self.parent_to_children.get(stop_id, [stop_id])
+        if stop_id in self.parent_to_children:          # stop ist Parent
+            base = [stop_id] + self.parent_to_children[stop_id]
+        else:                                           # stop ist Child
+            base = [stop_id]
+            for parent, children in self.parent_to_children.items():
+                if stop_id in children:
+                    base += children + [parent]
+                    break
+        return list(dict.fromkeys(base))                # Duplikate entfernen
+    
+
     
     def get_stops_by_name(self, name: str) -> List[Dict]:
         #Findet Haltestellen basierend auf Namen       
         if self.stops is None:
             return []
-        #Fuzzy-Suche nach Haltestellennamen
+        #Fuzzy-Suche nach Haltestellennamen, Erst exakte Übereinstimmung, dann eine "enthält" Suche
         name_lower = name.lower()
+ 
+        #1.Versuch: Exkater Name:
         matches = self.stops[self.stops['stop_name'].str.lower() == name_lower]
         if matches.empty:
             #fallback: enthält
+            #2.Versuch: Name ist enthalten(z.B. "Marktplatz" findet "KA Marktplatz")
             matches = self.stops[self.stops['stop_name'].str.lower().str.contains(name_lower, na=False, regex=False)]
         #regex=False -> pandas behandelt den Suchstring als normalen Text (Einstellung wegen Fehlermeldung)
         #regex=True wurde bedeuten, dass pandas den Suchstring als regulären Ausdruck interpretiert
 
-        return matches.to_dict('records')
+        return matches.to_dict('records') #Gibt Liste von Dictionaries zurück
     
     def get_route_info(self, route_id: str) -> Optional[Dict]:
         #Holt Informationen zu einer Route
