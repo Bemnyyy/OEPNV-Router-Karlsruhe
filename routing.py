@@ -55,13 +55,8 @@ class PublicTransportRouter:
         if "marktplatz" in end_input.lower():
             end_stops.sort(key=lambda stop: 0 if "kaiserstraße" in stop['stop_name'].lower() else 1)
         
-        all_journeys = []
-        
         for start_stop in start_stops:
-            for end_stop in end_stops:
-                if __debug__:
-                    print(f"Teste Kombination: {start_stop['stop_id']} -> {end_stop['stop_id']}")
-                
+            for end_stop in end_stops:                
                 journeys = self._dijkstra_routing(
                     start_stop,
                     end_stop,
@@ -73,12 +68,22 @@ class PublicTransportRouter:
                 
                 if journeys:
                     return journeys[:max_routes] # Nur die beste Route
-                   # break  # Erste erfolgreiche Kombination reicht
-            
-            if all_journeys:
-                break  # Erfolg gefunden
-        
-        return all_journeys[:max_routes]
+                #Fall bakc: versuche lockerere Zeitbeding.
+                for time_offset in [timedelta(minutes=-15), timedelta(minutes=15), timedelta(minutes=30)]:
+                    adjusted_time = departure_time + time_offset
+                    if adjusted_time.total_seconds() >= 0: #Keine neg Zeiten
+                        journeys = self._dijkstra_routing(
+                            start_stop, end_stop, adjusted_time, 
+                            filtered_connections, start_walking, end_walking
+                        )
+                        if journeys:
+                            return journeys[:max_routes]
+                #if journeys: # wenn kombi erfolgreich war, beende suche
+                #    break
+            #if journeys: # Wenn Start halte erfolgreich, beende suche
+            #    break
+                continue
+        return []   #Keine Route gefunden
 
 
     def _format_time(self, td: timedelta) -> str:
@@ -102,20 +107,20 @@ class PublicTransportRouter:
         if stops:
             # Sammelt alle relevanten Haltestellen IDs (inkl CHild Stops)
             all_stops = []
-            seen = set()  # Verhindert doppelte Einträge
+            seen = set()
             def _add(s):
-                if s['stop_id'] not in seen:
+                if s['stop_id'] not in seen and len(all_stops) < 5: #Maximal 5 stops
                     seen.add(s['stop_id'])
                     all_stops.append(s)
-            for stop in stops:
-                _add(stop)  # Fügt den eigentlichen Stop hinzu
-                # Fügt alle Child-Stops hinzu (z.B. einzelne Gleise)
+            for stop in stops[:3]: #Nur erste 3 gef. stops
+                _add(stop)
                 child_ids = self.gtfs_loader.get_all_child_stop_ids(stop['stop_id'])
-                for child_id in child_ids:
+                for child_id in child_ids[:3]: # auch hier nur die ersten 3
                     if child_id != stop['stop_id']:
                         child_stop = self.gtfs_loader.stops[self.gtfs_loader.stops['stop_id'] == child_id]
                         if not child_stop.empty:
                             _add(child_stop.iloc[0].to_dict())
+
             # Filtert nur Stops, die im Verbindungsindex vorkommen
             valid_stops = [s for s in all_stops if s['stop_id'] in self.gtfs_processor.connections_by_stop]
             if not valid_stops:
@@ -167,18 +172,9 @@ class PublicTransportRouter:
         #Verbindungen nach Haltestelle indexieren
         connections_by_stop = {}
     
-        
         for conn in connections:
             stop_id = conn['from_stop_id']
-            if stop_id not in connections_by_stop:
-                connections_by_stop.setdefault(stop_id, []).append(conn)
-
-        if __debug__:
-            print(f"Verbindungen ab {start_stop['stop_id']}: {len(connections_by_stop.get(start_stop['stop_id'], []))}")
-            #Zeige erste 5 Haltestellen im Index
-            for i, (stop_id, conns) in enumerate(connections_by_stop.items()):
-                if i < 5:
-                    print(f"  {stop_id}: {len(conns)} Verbindungen")
+            connections_by_stop.setdefault(stop_id, []).append(conn)                
 
         max_iterations = 10000 #Iterationen begrenzen, für besser Performance auch auf langsameren Geräten
         # max_iterations wurde auf 10.000 gestellt vorher 5000
@@ -191,7 +187,7 @@ class PublicTransportRouter:
 
         if __debug__:
             print(f"Starte Umstiegs-Suche von {start_stop['stop_id']} nach {end_stop['stop_id']}")
-            print(f"Verfügbar ab {start_stop['stop_id']}: {len(connections_by_stop.get(start_stop['stop_id']))} Verbindungen")
+            print(f"Verfügbar ab {start_stop['stop_id']}: {len(connections_by_stop.get(start_stop['stop_id'], []))} Verbindungen")
 
         # Suche bis zu 3 beste Routen unter der Bedingung, dass der itertaions count kleiner als die maximalen iterationen bleiben
         while pq and len(best_routes) < 3 and iteration_count < max_iterations:
@@ -227,19 +223,23 @@ class PublicTransportRouter:
                 valid_connections = []
                 for connection in connections_by_stop[current_stop]:
                     #Nur Verbindungen nach aktueller Zeit
-                    if connection['departure_time'] < current_time:
+                    if connection['route_id'] == 'WALK':
+                        # Fußwege: arrival_time ist die Gehzeit, departure_time wird auf current_time gesetzt
+                        connection = dict(connection)  # Kopie erstellen
+                        walking_time = connection['arrival_time']  # Gehzeit in timedelta
+                        connection['departure_time'] = current_time
+                        connection['arrival_time'] = current_time + walking_time
+                    elif connection['departure_time'] < current_time:
                         continue
                     
                     #Umstiegszeit prüfen
-                    new_transfers = transfers
                     if last_route and last_route != connection['route_id']:                      
                         # Umstieg -> 2 Minuten Puffer
                         wait_time = connection['departure_time'] - current_time
                         if wait_time < timedelta(seconds=config.TRANSFER_TIME_SECONDS):  # aus config (variable)
                             continue
+                        new_transfers = transfers + 1 # Umstiege zählen
                     else:
-                        if connection['departure_time'] < current_time:
-                            continue
                         new_transfers = transfers
 
                     valid_connections.append((connection, new_transfers))
@@ -251,7 +251,7 @@ class PublicTransportRouter:
                     new_time = connection['arrival_time']
                     dep_time = connection['departure_time']
 
-                    #Zeitvalidierung
+                    '''#Zeitvalidierung
                     if transfers == 0:
                         # Erstes Segment: Abfahrt nach gewünschter Startzeit
                         if dep_time < departure_time:
@@ -259,11 +259,16 @@ class PublicTransportRouter:
                     else:
                         # Umstieg: Abfahrt nach Ankunft am Umsteigepunkt + Mindestumstiegszeit
                         if dep_time < current_time + timedelta(seconds=config.TRANSFER_TIME_SECONDS):
-                            continue
+                            continue'''
 
-                    # Segment muss in sich valide sein
-                    if new_time <= dep_time:
-                        continue
+                    if connection['route_id'] == 'WALK':
+                        #Fußwege -> nur prüfen dass ankunft nach abfahrt liegt
+                        if new_time <= current_time:
+                            continue
+                    else:
+                        # Segment muss in sich valide sein
+                        if new_time <= dep_time:
+                            continue
 
                     # Neue Route zum Heap hinzufügen
                     new_path = path + [connection]
